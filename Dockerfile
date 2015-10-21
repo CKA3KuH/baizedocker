@@ -1,40 +1,71 @@
-# SA-MP-Docker
+# baizedocker
 
-FROM centos:latest
+FROM ubuntu:14.04
+MAINTAINER Ricardo de Castro (rcastro@gmv.com)
 
-MAINTAINER CKA3KuH
+RUN locale-gen es_ES.UTF-8
+ENV LANG es_ES.UTF-8
+ENV LANGUAGE es_ES:es
+ENV LC_ALL es_ES.UTF-8
 
-RUN yum install wget -y
-RUN wget http://dl.fedoraproject.org/pub/epel/7/x86_64/e/epel-release-7-5.noarch.rpm
-RUN wget http://rpms.famillecollet.com/enterprise/remi-release-7.rpm
-RUN rpm -Uvh remi-release-7*.rpm epel-release-7*.rpm
-RUN yum update -y && yum upgrade -y
-RUN yum install tar proftpd compat-libstdc++-33.i686 -y && yum install libstdc++.i686 -y && yum install libstdc++-devel.i686 -y
-RUN systemctl enable proftpd
-#RUN systemctl restart proftpd
+ENV PROXYHOST 192.168.131.13
+ENV PROXYPORT 80
 
-#RUN iptables -I INPUT -p tcp -m tcp --dport 21 -m state --state NEW -j ACCEPT
-#RUN iptables -I INPUT -p tcp -m tcp --dport 7777 -m state --state NEW -j ACCEPT
-#RUN iptables -I INPUT -p udp -m udp --dport 7777 -m state --state NEW -j ACCEPT
-#RUN service iptables save
+ENV http_proxy $PROXYHOST:$PROXYPORT
+ENV https_proxy $PROXYHOST:$PROXYPORT
 
-RUN cd ~ && \
- mkdir ~/server/ && \
- curl -OL http://files.sa-mp.com/samp037svr_R1.tar.gz && \
- tar -zxf samp037svr_R1.tar.gz -C /tmp/ && \
- cp -Rf /tmp/samp03/* ~/server/ && \
- rm -rf ~/samp037svr_R1.tar.gz && \
- rm -rf /tmp/samp03/
+RUN echo 'Acquire::http::Proxy "http://'$PROXYHOST:$PROXYPORT'";' >> /etc/apt/apt.conf
+RUN apt-get update
 
-RUN sed -i 's/rcon_password changeme/rcon_password Sa-MpDocker2015!/' ~/server/server.cfg
-RUN sed -i 's/hostname SA-MP 0.3 Server/hostname SA-MP 0.3 Docker Server/' ~/server/server.cfg
-RUN sed -i 's/announce 0/announce 1/' ~/server/server.cfg
-RUN sed -i 's/maxplayers 50/maxplayers 1000/' ~/server/server.cfg
 
-ADD run.sh /run.sh
-RUN chmod 755 /*.sh
+# INSTALLING SSH
+RUN sudo apt-get --quiet -y install openssh-server
+RUN mkdir /var/run/sshd
+RUN echo 'root:screencast' | chpasswd
+RUN sed -i 's/PermitRootLogin without-password/PermitRootLogin yes/' /etc/ssh/sshd_config
+RUN sed 's@session\s*required\s*pam_loginuid.so@session optional pam_loginuid.so@g' -i /etc/pam.d/sshd
 
-CMD ["/run.sh"]
 
-EXPOSE 21
-EXPOSE 7777
+# INSTALLING OPENJDK, POSTGRESQL and TOMCAT
+RUN sudo apt-get --quiet -y install openjdk-7-jdk
+RUN sudo apt-get --quiet -y install postgresql-9.3 postgresql-client-9.3 postgresql-contrib-9.3
+RUN sudo apt-get --quiet -y install tomcat7-common tomcat7 libtomcat7-java
+RUN sudo apt-get --quiet -y install inotify-tools inotify-tools
+
+# MOVING RESOURCES
+COPY resources/ness.war /var/lib/tomcat7/webapps/ness.war
+COPY resources/baize_dump.sql /tmp/baize_dump.sql
+COPY resources/postgresql-9.4-1204.jdbc41.jar /usr/share/tomcat7/lib/postgresql-9.4-1204.jdbc41.jar
+#RUN mkdir /var/lib/tomcat7/temp
+
+# CREATE USER, DATABASE, ETC
+USER postgres
+RUN /etc/init.d/postgresql start \
+        && /usr/bin/psql --command "ALTER USER postgres WITH PASSWORD 'b4iz3';" \
+        && createdb -O postgres baize
+RUN /etc/init.d/postgresql start \
+        && sleep 20 \
+        && /usr/bin/psql baize < /tmp/baize_dump.sql
+
+
+USER root
+ENV TOMCAT_USER tomcat7
+ENV CATALINA_HOME /usr/share/tomcat7
+ENV CATALINA_BASE /var/lib/tomcat7
+ENV CATALINA_TMPDIR /usr/share/tomcat7/temp
+ENV JAVA_HOME /usr/lib/jvm/java-7-openjdk-amd64
+ENV JRE_HOME /usr/lib/jvm/java-7-openjdk-amd64
+ENV CATALINA_PID /var/run/tomcat7.pid
+RUN mkdir $CATALINA_TMPDIR
+RUN echo "#!/bin/bash" > $CATALINA_HOME/bin/setenv.sh
+RUN set | sed -n -e /^CATALINA.*/p -e /^JRE_.*/p -e /^JAVA_.*/p -e /^LOGGING.*/p -e /^JPDA.*/p | sed "s/\(.*\)/export \1/" >> $CATALINA_HOME/bin/setenv.sh
+RUN chmod 755 $CATALINA_HOME/bin/setenv.sh
+RUN chown $TOMCAT_USER:$TOMCAT_USER $CATALINA_HOME/bin/setenv.sh
+
+RUN touch $CATALINA_PID $CATALINA_BASE/logs/catalina.out
+RUN chown $TOMCAT_USER:$TOMCAT_USER $CATALINA_PID $CATALINA_BASE/logs/catalina.out
+
+EXPOSE 22
+EXPOSE 5432
+EXPOSE 8080
+CMD service postgresql start && sleep 20 && /usr/share/tomcat7/bin/catalina.sh start && /usr/sbin/sshd -D
