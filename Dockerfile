@@ -32,21 +32,6 @@ RUN sudo apt-get --quiet -y install postgresql-9.3 postgresql-client-9.3 postgre
 RUN sudo apt-get --quiet -y install tomcat7-common tomcat7 libtomcat7-java
 RUN sudo apt-get --quiet -y install inotify-tools inotify-tools
 
-# MOVING RESOURCES
-COPY resources/ness.war /var/lib/tomcat7/webapps/ness.war
-COPY resources/baize_dump.sql /tmp/baize_dump.sql
-COPY resources/postgresql-9.4-1204.jdbc41.jar /usr/share/tomcat7/lib/postgresql-9.4-1204.jdbc41.jar
-#RUN mkdir /var/lib/tomcat7/temp
-
-# CREATE USER, DATABASE, ETC
-USER postgres
-RUN /etc/init.d/postgresql start \
-        && /usr/bin/psql --command "ALTER USER postgres WITH PASSWORD 'b4iz3';" \
-        && createdb -O postgres baize
-RUN /etc/init.d/postgresql start \
-        && sleep 20 \
-        && /usr/bin/psql baize < /tmp/baize_dump.sql
-
 
 USER root
 ENV TOMCAT_USER tomcat7
